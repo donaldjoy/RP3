@@ -169,7 +169,7 @@ relative to the repository, so it runs from wherever it is cloned.
 ├── results/              ANN forecasts (trades_*.csv are made by run_backtests.py)
 ├── images/               figures (nn_*.png are hand-drawn diagrams of the original network)
 ├── docs/feature_engineering_results.xlsx
-├── LICENSE               MIT (code), with the Elexon data attribution
+├── LICENSE               MIT (code; the data licence is in the README)
 └── tests/
 ```
 

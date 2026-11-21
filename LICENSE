@@ -19,13 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----------------------------------------------------------------------------
-Data
-
-The MIT License above covers the code, figures and documentation. The market
-data in data/ comes from Elexon's Balancing Mechanism Reporting Service (BMRS)
-and is used under Elexon's licence to use BMRS open data:
-https://www.elexon.co.uk/bsc/data/balancing-mechanism-reporting-agent/copyright-licence-bmrs-data/
-
-Contains BMRS data © Elexon Limited copyright and database right 2025.
