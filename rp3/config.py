@@ -16,6 +16,7 @@ RAW_DIR = DATA_DIR / "raw"
 PROCESSED_DIR = DATA_DIR / "processed"
 RESULTS_DIR = ROOT / "results"
 IMAGES_DIR = ROOT / "images"
+ENV_FILE = ROOT / ".env"                 # optional API key (git-ignored, see .env.example)
 
 # Raw downloads from Elexon BMRS (see README "Data sources")
 RAW_PRICES_CSV = RAW_DIR / "market_index_data_raw.csv"                    # dataset MID
@@ -39,13 +40,13 @@ TRADES_CSVS = {
 }
 
 # ---------------------------------------------------------------------------
-# Study period (all times are UTC, half-hourly)
+# Study period. Data is stored by UTC start time; trading days, hours and settlement
+# periods follow UK local time (GMT in winter, BST in summer), as the GB market does.
 # ---------------------------------------------------------------------------
 START = pd.Timestamp("2016-09-19 00:00", tz="UTC")
 END = pd.Timestamp("2025-01-20 00:00", tz="UTC")
-PERIODS_PER_DAY = 48
-# The three-strategy comparison starts where the multiple-seed ANN test set starts
-COMPARISON_START = pd.Timestamp("2023-06-19 09:30", tz="UTC")
+TIMEZONE = "Europe/London"
+PERIODS_PER_DAY = 48                  # half-hours in a normal day (46 / 50 on clock-change days)
 
 # ---------------------------------------------------------------------------
 # Battery (a 33.46 MWh grid-scale lithium-ion unit)
@@ -54,25 +55,25 @@ BATTERY_CAPACITY_MWH = 33.46
 DEGRADATION_PER_CYCLE = 0.025 / 365   # 2.5 % capacity loss per year at one cycle per day
 ROUND_TRIP_EFFICIENCY = 0.9456
 SOC_STEP = 0.125                      # state-of-charge change per half-hour trade (8 trades fill it)
-CAPACITY_TO_POWER_RATIO = 2.231       # MWh of capacity per MW of grid connection
+CAPACITY_TO_POWER_RATIO = 2.231       # MWh of capacity per MW of grid connection (15.0 MW)
 SLOTS_PER_DAY = 8                     # half-hours bought and sold per day (= 1 / SOC_STEP)
 
-# Time-based strategy windows, inclusive UTC hours
+# Time-based strategy windows, inclusive UK local hours
 IMPORT_HOURS = (1, 4)     # 01:00-04:59: buy
 EXPORT_HOURS = (17, 20)   # 17:00-20:59: sell
 
 # ---------------------------------------------------------------------------
-# ANN price forecast
+# ANN price forecast (scikit-learn MLPRegressor)
 # ---------------------------------------------------------------------------
-PRICE_FLOOR, PRICE_CAP = -35, 220   # prices outside this band are treated as outliers
-FILL_VALUE = 73                     # value used for outliers and missing data
-PRICE_LAG_DAYS = 6                  # features: the price 1..6 days earlier
+PRICE_FLOOR, PRICE_CAP = -35, 220   # training inputs and target are clipped to this band
+PRICE_LAG_DAYS = range(2, 8)        # features: the price 2..7 days before the half-hour forecast
 TRAIN_RATIO = 0.8                   # first 80 % of rows train, last 20 % test
-HIDDEN_LAYERS = (160, 160)          # neurons per hidden layer (from the Optuna search)
-LEARNING_RATE = 0.00013504016404346537
+VALIDATION_SPLIT = 0.2              # last 20 % of the training rows: early stopping and tuning
+# From `python train_ann.py --tune 50` (scored on the validation rows, not the test set)
+HIDDEN_LAYERS = (256,)              # neurons per hidden layer
+LEARNING_RATE = 0.002115429079726122
 EPOCHS = 100
-BATCH_SIZE = 256
-VALIDATION_SPLIT = 0.2
+BATCH_SIZE = 64
 EARLY_STOP_PATIENCE = 3
-EXOGENOUS_WEIGHT = 2.0              # multiplier on the wind forecasts (see README: no effect)
+SEED = 42                           # makes a training run repeatable
 SEEDS = (42, 100, 7)                # for the multiple-seed run

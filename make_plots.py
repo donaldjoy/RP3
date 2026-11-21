@@ -14,6 +14,7 @@ import matplotlib
 
 from rp3 import config, plotting
 from rp3.data_prep import load_generation, load_prices, read_timeseries
+from rp3.battery import comparison_start
 from rp3.forecasting import error_metrics
 
 GROUPS = ["market", "generation", "ann", "trades"]
@@ -47,7 +48,7 @@ def main():
 
     if "ann" in args.groups:
         forecast = read_timeseries(config.ANN_FORECAST_CSV)
-        m = error_metrics(forecast["ActualTomorrowPrice"], forecast["PredictedPrice"])
+        m = error_metrics(forecast["Price"], forecast["PredictedPrice"])
         print(f"ANN test set: RMSE {m['RMSE']:.2f}, MAE {m['MAE']:.2f}")
         plotting.forecast_vs_actual(forecast)
         plotting.forecast_windows(forecast)
@@ -63,8 +64,9 @@ def main():
         plotting.cashflow(perfect_and_time)
         plotting.profit_per_year(perfect_and_time)
         plotting.import_export_counts(trades["price"])
-        plotting.cashflow(trades, "Rolling Cashflow Over Time for Predicted Price", start=config.COMPARISON_START)
-        plotting.profit_per_year(trades, "Total Profit per Year for Predicted Price", start=config.COMPARISON_START)
+        start = comparison_start(trades["ann"])
+        plotting.cashflow(trades, "Rolling Cashflow Over Time for Predicted Price", start=start)
+        plotting.profit_per_year(trades, "Total Profit per Year for Predicted Price", start=start)
 
     print(f"Figures saved to {args.out}")
 
