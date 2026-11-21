@@ -1,2 +1,10 @@
 __pycache__/
 *.pyc
+.pytest_cache/
+.venv/
+
+# Rebuilt by `python download_data.py` (about 20 MB)
+data/raw/market_index_data_raw.csv
+
+# Rebuilt in seconds by `python run_backtests.py`
+results/trades_*.csv
