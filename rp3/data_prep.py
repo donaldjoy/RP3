@@ -5,9 +5,10 @@ Prices (MID):     drop the empty N2EX rows -> put on a complete half-hourly time
 Wind/solar (DGWS): keep the day-ahead forecasts -> split by type -> put on the timeline
                   -> fill each gap with the mean of the same half-hour on the 7 days before.
 
-Settlement periods are recomputed from the UTC time (00:00 UTC = period 1), so they
-match the UTC hours the strategies use. Official BMRS periods follow UK local time,
-see README "Known issues".
+Times are stored in UTC. ``SettlementDate`` and ``SettlementPeriod`` follow the GB
+market's definition: the UK local day, with period 1 starting at UK midnight (so there
+are 46 periods on the day the clocks go forward and 50 on the day they go back).
+Every gap that was filled is marked in a ``Filled`` column.
 """
 import numpy as np
 import pandas as pd
@@ -43,10 +44,20 @@ def full_timeline(start=config.START, end=config.END):
     return pd.date_range(start, end, freq=HALF_HOUR, name="StartTime")
 
 
+def uk_time(times):
+    """UTC times as UK local time (GMT or BST)."""
+    return pd.DatetimeIndex(times).tz_convert(config.TIMEZONE)
+
+
+def settlement_date(times):
+    """The UK local date each half-hour belongs to (the GB trading day)."""
+    return uk_time(times).date
+
+
 def settlement_period(times):
-    """Half-hour of the UTC day, 1..48 (00:00 -> 1, 23:30 -> 48)."""
-    times = pd.DatetimeIndex(times)
-    return times.hour * 2 + times.minute // 30 + 1
+    """GB settlement period: half-hours since UK midnight, plus one (1..46/48/50)."""
+    local = uk_time(times)
+    return np.asarray((local - local.normalize()) // HALF_HOUR + 1, dtype=int)
 
 
 def on_full_timeline(df, start=config.START, end=config.END):
@@ -92,9 +103,10 @@ def build_prices(raw_mid, start=config.START, end=config.END):
     df = raw_mid[raw_mid["DataProvider"] != "N2EXMIDP"].copy()
     df["StartTime"] = pd.to_datetime(df["StartTime"], utc=True)
     df = on_full_timeline(df[["StartTime", "Price", "Volume"]], start, end)
+    df["Filled"] = df["Price"].isna()
     for col in ["Price", "Volume"]:
         df[col] = fill_with_neighbour_mean(df[col])
-    df.insert(1, "SettlementDate", df["StartTime"].dt.strftime("%d/%m/%Y"))
+    df.insert(1, "SettlementDate", pd.to_datetime(settlement_date(df["StartTime"])).strftime("%d/%m/%Y"))
     df.insert(2, "SettlementPeriod", settlement_period(df["StartTime"]))
     return df
 
@@ -104,26 +116,24 @@ GENERATION_TYPES = {
     "Wind Onshore": "Wind generation",
     "Solar": "Solar generation",
 }
-# Decimal places for filled gaps. The original filled solar gaps to whole MW and wind to 3 d.p.
-FILL_DECIMALS = {"Wind Offshore": 3, "Wind Onshore": 3, "Solar": 0}
 
 
 def build_generation(raw_dgws, psr_type, start=config.START, end=config.END):
-    """One day-ahead forecast series (e.g. "Solar") on the complete timeline."""
+    """One day-ahead forecast series (e.g. "Solar", in MW) on the complete timeline.
+
+    If a half-hour appears more than once, the first row is kept (the download keeps
+    the earliest publication first).
+    """
     df = raw_dgws[(raw_dgws["PsrType"] == psr_type) & (raw_dgws["ProcessType"] == "Day ahead")].copy()
     df["StartTime"] = pd.to_datetime(df["StartTime"], utc=True)
-    df["SettlementPeriod"] = settlement_period(df["StartTime"])
     df = on_full_timeline(df, start, end)
 
-    missing = df["PublishTime"].isna()
-    # Forecasts are published at about 16:45 UTC the day before
-    df.loc[missing, "PublishTime"] = (df.loc[missing, "StartTime"] - pd.Timedelta(days=1)).dt.strftime("%Y-%m-%dT16:45:10Z")
-    df["ProcessType"] = df["ProcessType"].fillna("Day ahead")
-    df["BusinessType"] = df["BusinessType"].fillna(GENERATION_TYPES[psr_type])
-    df["PsrType"] = df["PsrType"].fillna(psr_type)
-    missing = df["SettlementDate"].isna()
-    df.loc[missing, "SettlementDate"] = df.loc[missing, "StartTime"].dt.strftime("%d/%m/%Y")
+    df["Filled"] = df["Quantity"].isna()
+    df["ProcessType"] = "Day ahead"
+    df["BusinessType"] = GENERATION_TYPES[psr_type]
+    df["PsrType"] = psr_type
+    df["SettlementDate"] = pd.to_datetime(settlement_date(df["StartTime"])).strftime("%d/%m/%Y")
     df["SettlementPeriod"] = settlement_period(df["StartTime"])
-    df["Quantity"] = fill_with_same_period_last_week(df["Quantity"], FILL_DECIMALS[psr_type])
+    df["Quantity"] = fill_with_same_period_last_week(df["Quantity"])
     return df[["PublishTime", "ProcessType", "BusinessType", "PsrType", "StartTime",
-               "SettlementDate", "SettlementPeriod", "Quantity"]]
+               "SettlementDate", "SettlementPeriod", "Quantity", "Filled"]]

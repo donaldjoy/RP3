@@ -8,3 +8,6 @@ data/raw/market_index_data_raw.csv
 
 # Rebuilt in seconds by `python run_backtests.py`
 results/trades_*.csv
+
+# API keys
+.env

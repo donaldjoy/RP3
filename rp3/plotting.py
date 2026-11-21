@@ -14,7 +14,7 @@ import pandas as pd
 import seaborn as sns
 
 from rp3 import config
-from rp3.data_prep import settlement_period
+from rp3.data_prep import settlement_date, settlement_period, uk_time
 
 STYLE = {"font.size": 15, "axes.labelsize": 25, "xtick.labelsize": 20, "ytick.labelsize": 20, "legend.fontsize": 15}
 FORECAST_STYLE = {**STYLE, "xtick.labelsize": 15}   # date labels need more room
@@ -70,7 +70,7 @@ def price_and_volume(prices):
 
 def average_price_by_period(prices, highlight=((14, 20), (33.5, 39.5))):
     """Average daily price curve; the shaded bands mark the cheap-morning / dear-evening spans."""
-    curve = prices.groupby("SettlementPeriod")["Price"].mean()
+    curve = prices.groupby("SettlementPeriod")["Price"].mean().reindex(range(1, 49))
     with figure("Average Daily Price (GBP/MWh) by Settlement Period") as (fig, ax):
         ax.plot(curve.index, curve.values, color="blue", marker="o", label="Average Price")
         ax.set_xlabel("Settlement Period")
@@ -82,8 +82,8 @@ def average_price_by_period(prices, highlight=((14, 20), (33.5, 39.5))):
 
 
 def average_price_by_weekday(prices):
-    table = prices.pivot_table(index="SettlementPeriod", columns=prices["StartTime"].dt.day_name(),
-                               values="Price", aggfunc="mean")[DAYS]
+    table = prices.pivot_table(index="SettlementPeriod", columns=uk_time(prices["StartTime"]).day_name(),
+                               values="Price", aggfunc="mean")[DAYS].reindex(range(1, 49))
     table.columns.name = "Day of Week"
     with figure("Average Price by Settlement Period for Each Day of Week") as (fig, ax):
         table.plot(ax=ax, marker="o")
@@ -93,7 +93,7 @@ def average_price_by_weekday(prices):
 
 def price_by_month(prices):
     df = pd.DataFrame({"Price": prices["Price"],
-                       "month": pd.Categorical(prices["StartTime"].dt.month_name(), MONTHS, ordered=True)})
+                       "month": pd.Categorical(uk_time(prices["StartTime"]).month_name(), MONTHS, ordered=True)})
     df = df.sort_values("month", kind="stable")   # seaborn colours months in order of appearance
     with figure("Price vs. Month") as (fig, ax):
         sns.violinplot(data=df, x="month", y="Price", hue="month", order=MONTHS, palette="coolwarm",
@@ -104,8 +104,8 @@ def price_by_month(prices):
 
 
 def daily_price_vs_volume(prices, year=2024):
-    df = prices[prices["StartTime"].dt.year == year]
-    daily = df.groupby(df["StartTime"].dt.date).agg(Volume=("Volume", "sum"), Price=("Price", "mean"))
+    df = prices[uk_time(prices["StartTime"]).year == year]
+    daily = df.groupby(settlement_date(df["StartTime"])).agg(Volume=("Volume", "sum"), Price=("Price", "mean"))
     with figure(f"Daily Average Price vs Daily Volume ({year})", figsize=(10, 6)) as (fig, ax):
         ax.scatter(daily["Price"], daily["Volume"], alpha=0.5, c="blue", edgecolor="k")
         ax.set_xlabel("Average Daily Price (GBP/MWh)")
@@ -115,7 +115,7 @@ def daily_price_vs_volume(prices, year=2024):
 
 def total_volume_per_year(prices, skip_years=(2016, 2025)):
     """Partial first and last years are left out."""
-    totals = prices.groupby(prices["StartTime"].dt.year)["Volume"].sum().drop(list(skip_years), errors="ignore")
+    totals = prices.groupby(uk_time(prices["StartTime"]).year)["Volume"].sum().drop(list(skip_years), errors="ignore")
     with figure("Total Volume vs Year", figsize=(10, 6)) as (fig, ax):
         totals.plot(kind="bar", color="orange", edgecolor="black", ax=ax)
         ax.set_xlabel("Year")
@@ -133,26 +133,28 @@ def generation_series(generation):
         with figure(f"{name} DA Gen Forecast") as (fig, ax):
             ax.plot(df["StartTime"], df["Quantity"], color="b", label=GENERATION_LABELS[name])
             ax.set_xlabel("Year")
-            ax.set_ylabel("Quantity (MWh)")
+            ax.set_ylabel("Forecast output (MW)")
             ax.legend()
             ax.grid(True)
 
 
 def _generation_table(generation, by, how):
+    """Forecast MW grouped by UK year, month or settlement period."""
     columns = {}
     for name, df in generation.items():
-        key = {"year": df["StartTime"].dt.year, "month": df["StartTime"].dt.month,
-               "period": settlement_period(df["StartTime"])}[by]
+        local = uk_time(df["StartTime"])
+        key = {"year": local.year, "month": local.month, "period": settlement_period(df["StartTime"])}[by]
         columns[GENERATION_LABELS[name]] = df["Quantity"].groupby(np.asarray(key)).agg(how)
     return pd.DataFrame(columns).sort_index()
 
 
 def generation_summaries(generation, skip_years=(2016, 2025)):
-    yearly = _generation_table(generation, "year", "sum").drop(list(skip_years), errors="ignore")
+    # Each value is average MW over half an hour, so energy = MW x 0.5 h; shown in TWh
+    yearly = _generation_table(generation, "year", "sum").drop(list(skip_years), errors="ignore") * 0.5
     with figure("Aggregated DA Gen Forecast Quantity per Year") as (fig, ax):
         yearly.plot(kind="bar", ax=ax)
         ax.set_xlabel("Year")
-        ax.set_ylabel("Total Quantity (Million MWh)")
+        ax.set_ylabel("Forecast energy (TWh)")
         millions(ax)
         ax.legend(title="Category")
         ax.grid(True)
@@ -161,7 +163,7 @@ def generation_summaries(generation, skip_years=(2016, 2025)):
     with figure("Average DA Gen Forecast Quantity per Settlement Period") as (fig, ax):
         by_period.plot(ax=ax, marker="o")
         ax.set_xlabel("Settlement Period")
-        ax.set_ylabel("Average Quantity (MWh)")
+        ax.set_ylabel("Average forecast (MW)")
         ax.legend(title="Category")
         ax.grid(True)
 
@@ -170,7 +172,7 @@ def generation_summaries(generation, skip_years=(2016, 2025)):
     with figure("Average DA Gen Forecast Quantity per Month") as (fig, ax):
         by_month.plot(kind="bar", ax=ax)
         ax.set_xlabel("Month")
-        ax.set_ylabel("Average Quantity (MWh)")
+        ax.set_ylabel("Average forecast (MW)")
         ax.legend(title="Category")
         ax.grid(True)
 
@@ -179,9 +181,9 @@ def generation_summaries(generation, skip_years=(2016, 2025)):
 # ANN forecast
 # ---------------------------------------------------------------------------
 def forecast_vs_actual(forecast):
-    """``forecast`` has StartTime, ActualTomorrowPrice and PredictedPrice."""
+    """``forecast`` has StartTime (the half-hour forecast), Price (real) and PredictedPrice."""
     with figure("Electricity Price Forecast vs Actual (Test Set)", style=FORECAST_STYLE) as (fig, ax):
-        ax.plot(forecast["StartTime"], forecast["ActualTomorrowPrice"], label="Actual Price", color="green")
+        ax.plot(forecast["StartTime"], forecast["Price"], label="Actual Price", color="green")
         ax.plot(forecast["StartTime"], forecast["PredictedPrice"], label="Forecasted Price", color="red")
         ax.set_xlabel("Time")
         ax.set_ylabel("Price (GBP/MWh)")
@@ -195,14 +197,13 @@ FORECAST_WINDOWS = {
 
 
 def forecast_windows(forecast, windows=FORECAST_WINDOWS):
-    """Zoom on a few days. Like ``df.loc["2024-12-01":"2024-12-03"]``, the end day is included."""
-    times = forecast["StartTime"]
+    """Zoom on a few UK days (both end days included); times shown in UK local time."""
+    days = pd.Series(settlement_date(forecast["StartTime"]), index=forecast.index)
     for name, (start, end) in windows.items():
-        lo = pd.Timestamp(start, tz="UTC")
-        hi = pd.Timestamp(end, tz="UTC") + pd.Timedelta(days=1)
-        df = forecast[(times >= lo) & (times < hi)]
+        df = forecast[(days >= pd.Timestamp(start).date()) & (days <= pd.Timestamp(end).date())]
+        df = df.assign(StartTime=uk_time(df["StartTime"]).tz_localize(None))
         with figure(f"Forecast vs Actual Price {name}", style=FORECAST_STYLE) as (fig, ax):
-            ax.plot(df["StartTime"], df["ActualTomorrowPrice"], label="Actual Price", color="green")
+            ax.plot(df["StartTime"], df["Price"], label="Actual Price", color="green")
             ax.plot(df["StartTime"], df["PredictedPrice"], label="Forecasted Price", color="red")
             ax.set_xlabel("Time")
             ax.set_ylabel("Price (GBP/MWh)")
@@ -214,7 +215,7 @@ def forecast_windows(forecast, windows=FORECAST_WINDOWS):
 
 def multiple_seeds(forecast, seeds=config.SEEDS):
     with figure("Electricity Price Forecast vs Actual (Multiple Models)", style=FORECAST_STYLE) as (fig, ax):
-        ax.plot(forecast["StartTime"], forecast["ActualTomorrowPrice"], label="Actual Tomorrow Price",
+        ax.plot(forecast["StartTime"], forecast["Price"], label="Actual Price",
                 color="black", linewidth=2)
         for seed, colour in zip(seeds, ["red", "blue", "green"]):
             ax.plot(forecast["StartTime"], forecast[f"PredictedPrice_{seed}"], label=f"Predicted (seed {seed})",
@@ -260,11 +261,15 @@ def profit_per_year(trades, title="Total Profit per Year", start=None):
 
 
 def import_export_counts(trades):
-    """How often each settlement period was chosen to buy and to sell (planned actions)."""
+    """How often each settlement period was actually used to buy and to sell.
+
+    Trades skipped because the battery was full or empty are not counted. Periods 49
+    and 50 (only on the day the clocks go back) are left out.
+    """
     from rp3.battery import EXPORT, IMPORT
 
     period = settlement_period(trades["StartTime"])
-    counts = pd.crosstab(period, trades["Action"]).reindex(index=range(1, 49), columns=[IMPORT, EXPORT],
+    counts = pd.crosstab(period, trades["Executed"]).reindex(index=range(1, 49), columns=[IMPORT, EXPORT],
                                                           fill_value=0)
     x, width = np.arange(1, 49), 0.4
     with figure("Count of Imports & Exports by Settlement Period") as (fig, ax):
