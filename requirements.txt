@@ -1,0 +1,11 @@
+# Data, backtests and plots (any Python 3.10+)
+numpy>=1.26
+pandas>=2.1
+matplotlib>=3.8
+seaborn>=0.13
+scikit-learn>=1.3
+requests>=2.31
+pytest>=8
+
+# ANN training only (train_ann.py). TensorFlow needs Python 3.10-3.12:
+#   pip install "tensorflow>=2.15" "optuna>=3.4"
