@@ -1,11 +1,12 @@
-"""Step 3: train the ANN day-ahead price forecast (needs TensorFlow).
+"""Step 3: train the ANN day-ahead price forecast (scikit-learn, any recent Python).
 
     python train_ann.py                 # one model -> results/ann_forecast.csv
-    python train_ann.py --seed 42       # the same, reproducible
+    python train_ann.py --seed 7        # the same with another random seed
     python train_ann.py --seeds         # one model per seed (42, 100, 7) -> results/ann_forecast_multiple_seeds.csv
-    python train_ann.py --tune 50       # Optuna search over the network settings (needs optuna)
+    python train_ann.py --tune 50       # Optuna search on the validation rows (needs optuna)
 
-The settings (layers, learning rate, epochs, ...) are in rp3/config.py.
+The settings (layers, learning rate, epochs, ...) are in rp3/config.py; copy the
+result of --tune there. Runs are repeatable: the default seed is config.SEED.
 """
 import argparse
 
@@ -19,7 +20,7 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--seeds", action="store_true", help="train once per seed in config.SEEDS")
     mode.add_argument("--tune", type=int, metavar="TRIALS", help="run an Optuna search with this many trials")
-    parser.add_argument("--seed", type=int, help="random seed for a single run")
+    parser.add_argument("--seed", type=int, default=config.SEED, help="random seed for a single run")
     args = parser.parse_args()
     config.RESULTS_DIR.mkdir(exist_ok=True)
 
@@ -27,8 +28,8 @@ def main():
 
     if args.tune:
         study = tune_hyperparameters(prices, generation, n_trials=args.tune)
-        print(f"Best RMSE: {study.best_value:.4f}")
-        print("Best settings:", study.best_params)
+        print(f"Best validation RMSE: {study.best_value:.3f}")
+        print("Best settings (copy into rp3/config.py):", study.best_params)
     elif args.seeds:
         forecast, metrics = run_multiple_seeds(prices, generation)
         for seed, m in metrics.items():
