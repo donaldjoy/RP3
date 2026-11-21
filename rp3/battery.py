@@ -4,15 +4,19 @@ A strategy is just a choice of *action* for every half-hour:
 ``IDLE`` (0), ``IMPORT`` (1, buy and charge) or ``EXPORT`` (2, sell and discharge).
 :func:`simulate` then plays those actions through the battery in time order.
 
-Battery rules (unchanged from the original RP3 model):
+Battery rules:
 
 * State of charge (SoC) runs from 0 to 1 in steps of ``soc_step`` (0.125, so eight
   half-hour trades fill or empty it). A trade that would leave 0..1 is skipped.
+* A trade moves exactly the energy of one SoC step: ``soc_step x capacity`` MWh
+  (4.18 MWh when new). It is bought or sold at that half-hour's price (GBP/MWh), and
+  the revenue from a sale is reduced by the round-trip efficiency.
+* That energy in half an hour needs 8.4 MW, within the 15 MW grid connection
+  (``capacity / capacity_to_power_ratio``); :class:`Battery` checks this.
 * One full cycle is a SoC distance of 2 (fully charge and fully discharge).
   After ``n`` full cycles the capacity is ``capacity * (1 - n * degradation)``.
-* The grid connection is ``capacity / capacity_to_power_ratio`` MW. A trade buys or
-  sells that many MW at the half-hour's price (GBP/MWh). Revenue on export is
-  reduced by the round-trip efficiency.
+
+Days and hours are UK local time, as in the GB market.
 """
 from dataclasses import dataclass
 
@@ -20,9 +24,12 @@ import numpy as np
 import pandas as pd
 
 from rp3 import config
+from rp3.data_prep import settlement_date, uk_time
 
 IDLE, IMPORT, EXPORT = 0, 1, 2
-RESULT_COLUMNS = ["Action", "Executed", "SoC", "Cost", "Revenue", "Rolling Cashflow", "Total Cycles Achieved"]
+RESULT_COLUMNS = ["Action", "Executed", "SoC", "Energy (MWh)", "Cost", "Revenue", "Rolling Cashflow",
+                  "Total Cycles Achieved"]
+HOURS_PER_TRADE = 0.5
 
 
 @dataclass(frozen=True)
@@ -33,17 +40,31 @@ class Battery:
     soc_step: float = config.SOC_STEP
     capacity_to_power_ratio: float = config.CAPACITY_TO_POWER_RATIO
 
+    def __post_init__(self):
+        if self.energy_per_trade_mwh / HOURS_PER_TRADE > self.power_mw + 1e-9:
+            raise ValueError(f"A SoC step of {self.soc_step} needs {self.energy_per_trade_mwh / HOURS_PER_TRADE:.1f} MW "
+                             f"in half an hour, more than the {self.power_mw:.1f} MW grid connection")
+
     @property
     def steps_to_full(self):
         return int(round(1 / self.soc_step))
+
+    @property
+    def power_mw(self):
+        return self.capacity_mwh / self.capacity_to_power_ratio
+
+    @property
+    def energy_per_trade_mwh(self):
+        """Energy of one trade while the battery is new."""
+        return self.soc_step * self.capacity_mwh
 
 
 # ---------------------------------------------------------------------------
 # Strategies: each returns one action per row
 # ---------------------------------------------------------------------------
 def time_based_actions(start_times, import_hours=config.IMPORT_HOURS, export_hours=config.EXPORT_HOURS):
-    """Buy in a fixed night window and sell in a fixed evening window (inclusive UTC hours)."""
-    hour = pd.DatetimeIndex(start_times).hour
+    """Buy in a fixed night window and sell in a fixed evening window (inclusive UK local hours)."""
+    hour = uk_time(start_times).hour
     actions = np.full(len(hour), IDLE, dtype=np.int8)
     actions[(hour >= import_hours[0]) & (hour <= import_hours[1])] = IMPORT
     actions[(hour >= export_hours[0]) & (hour <= export_hours[1])] = EXPORT
@@ -54,8 +75,8 @@ def price_ranked_actions(prices, days, n_slots=config.SLOTS_PER_DAY):
     """Each day, buy in the ``n_slots`` cheapest half-hours and sell in the ``n_slots`` dearest.
 
     ``prices`` is what the decision is based on: the real price (perfect foresight)
-    or a forecast. On a day with fewer than ``2 * n_slots`` rows a slot can be in
-    both sets, and selling wins (as in the original code).
+    or a forecast. Ties go to the earlier half-hour. On a day with fewer than
+    ``2 * n_slots`` rows a slot can be in both sets, and selling wins.
     """
     ranks = pd.DataFrame({"price": np.asarray(prices), "day": np.asarray(days)}).groupby("day")["price"]
     cheapest = ranks.rank(method="first", ascending=True) <= n_slots
@@ -97,14 +118,15 @@ def simulate(actions, trade_prices, battery=Battery()):
     cycles_before = np.concatenate(([0], cycles_after[:-1]))
 
     capacity = np.maximum(battery.capacity_mwh * (1.0 - cycles_before * battery.degradation_per_cycle), 0.0)
-    power_mw = capacity / battery.capacity_to_power_ratio
-    cost = np.where(executed == IMPORT, -power_mw * trade_prices, 0.0)
-    revenue = np.where(executed == EXPORT, power_mw * trade_prices * battery.round_trip_efficiency, 0.0)
+    energy = np.where(executed != IDLE, battery.soc_step * capacity, 0.0)
+    cost = np.where(executed == IMPORT, -energy * trade_prices, 0.0)
+    revenue = np.where(executed == EXPORT, energy * trade_prices * battery.round_trip_efficiency, 0.0)
 
     return pd.DataFrame({
         "Action": np.asarray(actions),
         "Executed": executed,
         "SoC": levels * battery.soc_step,
+        "Energy (MWh)": energy,
         "Cost": cost,
         "Revenue": revenue,
         "Rolling Cashflow": np.cumsum(cost + revenue),
@@ -129,24 +151,30 @@ def time_based_trades(prices, battery=Battery()):
 
 
 def price_based_trades(prices, battery=Battery()):
-    """Perfect-foresight benchmark: picks each day's slots from the real prices."""
+    """Perfect-foresight benchmark: picks each UK day's slots from the real prices."""
     prices = prices.sort_values("StartTime", ignore_index=True)
-    actions = price_ranked_actions(prices["Price"], prices["StartTime"].dt.date)
+    actions = price_ranked_actions(prices["Price"], settlement_date(prices["StartTime"]))
     return run_strategy(prices, actions, "Price", battery)
 
 
 def ann_based_trades(forecast, prices, battery=Battery()):
-    """Pick each day's slots from the ANN forecast, then trade at the real price.
+    """Pick each UK day's slots from the ANN forecast, then trade at the real price.
 
-    As in the original code the forecast row at time ``t`` is joined to the real
-    price at the same ``t``. The forecast at ``t`` is a forecast of the price at
-    ``t + 1 day``, so this is one day out of step; see README "Known issues".
+    Each forecast row's ``StartTime`` is the half-hour it predicts, so it is joined to
+    the real price of that same half-hour.
     """
-    table = forecast[["StartTime", "SettlementDate", "SettlementPeriod", "PredictedPrice"]].merge(
-        prices[["StartTime", "Price"]], on="StartTime", how="left"
+    table = forecast[["StartTime", "PredictedPrice"]].merge(
+        prices[["StartTime", "SettlementDate", "SettlementPeriod", "Price"]], on="StartTime", how="inner"
     ).sort_values("StartTime", ignore_index=True)
-    actions = price_ranked_actions(table["PredictedPrice"], table["StartTime"].dt.date)
+    actions = price_ranked_actions(table["PredictedPrice"], settlement_date(table["StartTime"]))
     return run_strategy(table, actions, "Price", battery)
+
+
+def comparison_start(ann_trades):
+    """First UK midnight on or after the first ANN forecast: where the three strategies are compared."""
+    first = uk_time(ann_trades["StartTime"])[0]
+    midnight = first.normalize()
+    return (midnight if midnight == first else midnight + pd.DateOffset(days=1)).tz_convert("UTC")
 
 
 def yearly_profit(trades, start=None):
@@ -154,4 +182,4 @@ def yearly_profit(trades, start=None):
     if start is not None:
         trades = trades[trades["StartTime"] >= start]
     pnl = trades["Cost"] + trades["Revenue"]
-    return pnl.groupby(trades["StartTime"].dt.year).sum()
+    return pnl.groupby(uk_time(trades["StartTime"]).year).sum()

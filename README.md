@@ -7,7 +7,7 @@ January 2025:
 
 | Strategy | How it picks the half-hours to trade |
 |---|---|
-| ⏰ **Time based** | Buys 01:00–04:59 and sells 17:00–20:59 every day |
+| ⏰ **Time based** | Buys 01:00–04:59 and sells 17:00–20:59 (UK time) every day |
 | 🎯 **Price based** | Buys the 8 cheapest and sells the 8 dearest half-hours of each day, from the *real* prices (perfect foresight, so an upper benchmark) |
 | 🧠 **ANN based** | The same, but picks the half-hours from a neural-network forecast of the next day's prices |
 
@@ -18,41 +18,53 @@ is deliberately simple: one battery model, three strategies, and one feed-forwar
 
 ## 📊 Results
 
-From `python run_backtests.py` (GBP millions, before any fixes from [Known issues](#%EF%B8%8F-known-issues)):
+From `python run_backtests.py` (GBP millions):
 
-| Strategy | Profit 19 Sep 2016 → 20 Jan 2025 | Profit 19 Jun 2023 → 20 Jan 2025 | Full cycles |
+| Strategy | Profit 19 Sep 2016 → 20 Jan 2025 | Profit 24 May 2023 → 20 Jan 2025 | Full cycles |
 |---|---:|---:|---:|
-| Time based | 9.795 | 1.770 | 3045 |
-| Price based (perfect foresight) | 13.445 | 2.432 | 2626 |
-| ANN based | – | 2.059 | 574 |
+| Time based | 2.832 | 0.519 | 3043 |
+| Price based (perfect foresight) | 3.795 | 0.710 | 2666 |
+| ANN based | – | **0.629** | 559 |
 
-The ANN only has forecasts for its test period (the last 20 % of the data, from May 2023), so
-the three are compared from 19 June 2023. The report used an earlier ANN training run
-(`results/ann_forecast_2025-03-01.csv`), which gives **2.055**. Run
-`python run_backtests.py --forecast results/ann_forecast_2025-03-01.csv` to reproduce it exactly.
+The ANN only has forecasts for its test period (the last 20 % of the data), so the three
+strategies are compared from the first full UK day of that period, 24 May 2023. Over that
+period the forecast closes **58 %** of the gap between fixed hours and perfect foresight.
 
-ANN test-set error: **RMSE 25.75, MAE 18.58 GBP/MWh**. That is measured against prices whose
-outliers were replaced by 73; against the real prices it is RMSE 32.60, MAE 19.33 (see issue 4).
+ANN test-set error, against the real (unclipped) price of each half-hour:
+
+| Forecast | RMSE | MAE |
+|---|---:|---:|
+| **ANN** (seed 42) | **30.39** | **18.09** |
+| ANN, seeds 42 / 100 / 7 | 30.39 / 32.30 / 31.96 | 18.09 / 20.47 / 20.07 |
+| Naive: same as 2 days earlier | 38.54 | 23.78 |
+| Naive: same as 7 days earlier | 39.79 | 25.11 |
+
+The spread between seeds is as large as some feature effects, so differences of 1–2 GBP/MWh
+between runs are noise.
 
 <p align="center">
   <img src="images/Rolling Cashflow Over Time for Predicted Price.png" width="48%">
   <img src="images/Total Profit per Year for Predicted Price.png" width="48%">
 </p>
 
+> **These numbers are lower than in the 2025 report.** The report's profits were about 3.6 times
+> too high, because each trade was charged for 15 MWh while the battery only moved 4.18 MWh. See
+> [Fixes since the report](#%EF%B8%8F-fixes-since-the-report) for this and the other corrections.
+
 ---
 
 ## 📥 Data sources
 
 Both datasets are public and come from **Elexon's Balancing Mechanism Reporting Service (BMRS)**,
-the official source of GB electricity market data. No API key is needed.
+the official source of GB electricity market data. No API key is needed (see [API keys](#-api-keys)).
 
 | | Prices and volumes | Wind and solar forecasts |
 |---|---|---|
 | **BMRS dataset** | `MID`: Market Index Data | `DGWS`: Day-ahead generation forecast for wind and solar |
-| **What it is** | Half-hourly short-term wholesale price (GBP/MWh) and traded volume (MWh) | NESO's forecast of offshore wind, onshore wind and solar output for each half-hour, published about 17:45 UK time the day before |
+| **What it is** | Half-hourly short-term wholesale price (GBP/MWh) and traded volume (MWh) | NESO's forecast of offshore wind, onshore wind and solar output (MW) for each half-hour, published about 17:45 UK time the day before |
 | **Web page** | <https://bmrs.elexon.co.uk/market-index-prices> | <https://bmrs.elexon.co.uk/day-ahead-generation-forecast-wind-and-solar> |
 | **API endpoint** | `https://data.elexon.co.uk/bmrs/api/v1/datasets/MID` | `https://data.elexon.co.uk/bmrs/api/v1/forecast/generation/wind-and-solar/day-ahead` |
-| **Raw file here** | `data/raw/market_index_data_raw.csv` (made by `download_data.py`) | `data/raw/DayAheadGenerationForecastWindAndSolar.csv` (BMRS website CSV export, Feb 2025) |
+| **Raw file here** | `data/raw/market_index_data_raw.csv` (made by `download_data.py`, git-ignored) | `data/raw/DayAheadGenerationForecastWindAndSolar.csv` (made by `download_data.py`) |
 | **Processed file** | `data/processed/prices_2016_2025.csv` | `data/processed/{wind_offshore,wind_onshore,solar}_da_forecast_2016_2025.csv` |
 
 * **Period:** 2016-09-19 00:00 to 2025-01-20 00:00 UTC, every half-hour (146,161 rows).
@@ -60,11 +72,12 @@ the official source of GB electricity market data. No API key is needed.
   N2EX (`N2EXMIDP`) reports zero for almost every period, so it is dropped.
 * **API documentation:** <https://bmrs.elexon.co.uk/api-documentation>. Each request can
   cover at most 7 days, so `download_data.py` fetches the data week by week.
-* **Checked against the source (Nov 2026):** rebuilding `prices_2016_2025.csv` from a fresh
-  API download gives a byte-for-byte identical file. For the wind and solar forecasts, every
-  half-hour present in both the original export and the API has identical values. The API now
-  also has about 338 half-hours a year that were missing from the 2025 website export (the
-  original code filled those with averages, see below).
+* **Checked against the source (Nov 2026):** the prices rebuilt from the API are identical to
+  the ones used in the report. The 2025 report used a CSV export of the wind/solar forecasts
+  from the BMRS website; the API has the same values plus 3,230 half-hours that export was
+  missing, so the API download is now used. 111 whole days (mostly 2020–2022) have no
+  day-ahead forecast at all from NESO and are filled as described below.
+* **Downloaded:** 21 November 2026, with `python download_data.py`.
 * **Licence:** BMRS data is published under Elexon's
   [licence to use BMRS open data](https://www.elexon.co.uk/bsc/data/balancing-mechanism-reporting-agent/copyright-licence-bmrs-data/),
   which allows copying and redistribution with attribution:
@@ -73,11 +86,33 @@ the official source of GB electricity market data. No API key is needed.
 ### How the raw data becomes the processed data (`prepare_data.py`)
 
 1. **Prices:** drop the N2EX rows → place on a complete half-hourly timeline → fill each
-   missing half-hour with the mean of the last value before it and the next value after it.
-2. **Wind/solar:** keep the day-ahead forecasts (not the intraday updates) → split into the three
-   types → place on the timeline → fill each missing half-hour with the mean of the same
-   half-hour on the previous 7 days.
-3. `SettlementPeriod` is recalculated from the UTC time (00:00 UTC is period 1).
+   missing half-hour (2,773, 1.9 %) with the mean of the last value before it and the next value after it.
+2. **Wind/solar:** keep the first day-ahead forecast for each half-hour → split into the three
+   types → place on the timeline → fill each missing half-hour (5,328, 3.6 %) with the mean of the
+   same half-hour on the previous 7 days.
+3. `SettlementDate` and `SettlementPeriod` follow the GB market: the UK local day, with period 1
+   starting at UK midnight (46 periods when the clocks go forward, 50 when they go back). They
+   match Elexon's own values on every row (checked by `tests/test_data_prep.py`).
+4. Every filled half-hour is marked `Filled = True`, so it can be left out of an analysis.
+
+---
+
+## 🔑 API keys
+
+Elexon's API is open, so **no key is needed** and none is stored anywhere in this repository.
+As in RP4, a key would go in a git-ignored `.env` file at the repository root, read by
+`python-dotenv` only when a request is made and never printed:
+
+```bash
+cp .env.example .env
+```
+
+```
+ELEXON_API_KEY=your-key-here
+```
+
+If `ELEXON_API_KEY` is set, `rp3/elexon.py` sends it with every request; if it's empty, requests
+are sent without it.
 
 ---
 
@@ -101,16 +136,16 @@ results and figures. The full pipeline, in order:
 | Step | Command | Makes | Time |
 |---|---|---|---|
 | 1 | `python download_data.py` | `data/raw/` from the Elexon API | ~5 min |
-| 2 | `python prepare_data.py` | `data/processed/` (add `--check` to only look for gaps) | ~5 s |
-| 3 | `python train_ann.py` (`--seed N`, `--seeds`, `--tune 50`) | `results/ann_forecast*.csv` | minutes, needs TensorFlow |
+| 2 | `python prepare_data.py` | `data/processed/` (add `--check` to only look for gaps) | ~10 s |
+| 3 | `python train_ann.py` (`--seed N`, `--seeds`, `--tune 50`) | `results/ann_forecast*.csv` | ~12 s per model (`--tune 50`: ~30 min) |
 | 4 | `python run_backtests.py` (`--forecast FILE`) | `results/trades_*.csv` + a profit summary | ~1 s |
 | 5 | `python make_plots.py` (`market generation ann trades`, `--show`, `--out DIR`) | `images/*.png` | ~30 s |
 
-`pytest` runs the tests (about 5 s, no TensorFlow needed). They check the battery rules on small
-hand-made inputs, and that the backtests still reproduce the original results to the penny.
+`pytest` runs the tests (about 10 s). They check the battery rules on small hand-made inputs, the
+settlement periods against Elexon's official values, and that the network trains.
 
-> TensorFlow does not yet support the newest Python versions. Use Python 3.10–3.12 for
-> `train_ann.py`; everything else works on any recent Python.
+Everything runs on any recent Python (tested on 3.14) on Windows, macOS or Linux. All paths are
+relative to the repository, so it runs from wherever it is cloned.
 
 ---
 
@@ -118,6 +153,7 @@ hand-made inputs, and that the backtests still reproduce the original results to
 
 ```
 ├── download_data.py      step 1: Elexon API -> data/raw
+├── .env.example          where an API key would go (copy to .env)
 ├── prepare_data.py       step 2: data/raw -> data/processed (gap filling, checks)
 ├── train_ann.py          step 3: ANN price forecast
 ├── run_backtests.py      step 4: the three strategies
@@ -127,11 +163,11 @@ hand-made inputs, and that the backtests still reproduce the original results to
 │   ├── elexon.py         API download
 │   ├── data_prep.py      loading, timeline, gap filling, gap check
 │   ├── battery.py        battery model and the three strategies
-│   ├── forecasting.py    ANN features, training, multiple seeds, Optuna search
+│   ├── forecasting.py    ANN (scikit-learn): features, training, seeds, Optuna search
 │   └── plotting.py       one function per figure
 ├── data/raw, data/processed
 ├── results/              ANN forecasts (trades_*.csv are made by run_backtests.py)
-├── images/               report figures (nn_*.png are hand-drawn diagrams)
+├── images/               figures (nn_*.png are hand-drawn diagrams of the original network)
 ├── docs/feature_engineering_results.xlsx
 └── tests/
 ```
@@ -153,9 +189,10 @@ that fills in four half-hours, or change `IMPORT_HOURS` for the time-based strat
 | State of charge (SoC) step per trade | 0.125 (8 half-hour trades fill or empty it) |
 
 Every half-hour the strategy says *buy*, *sell* or *wait*. A buy is skipped if the battery is full,
-and a sale is skipped if it is empty. A buy costs `power × price` and a sale earns
-`power × price × efficiency`. One full cycle is a SoC distance of 2 (fill and empty), and the
-capacity shrinks after each cycle.
+and a sale is skipped if it is empty. Each trade moves one SoC step of energy, 0.125 × capacity
+(4.18 MWh when new, 8.4 MW for half an hour, within the 15 MW connection). A buy costs
+`energy × price` and a sale earns `energy × price × efficiency`. One full cycle is a SoC distance of
+2 (fill and empty), and the capacity shrinks after each cycle. Days and hours are UK local time.
 
 **Speed:** the original scripts updated a DataFrame one row at a time (81 s for the time-based run,
 59 s for the price-based one). Now only the SoC walk is a loop, over plain integers. The daily
@@ -164,10 +201,21 @@ ranking, cycle counting, degradation and cash flows are whole-array operations, 
 
 ### ANN forecast (`rp3/forecasting.py`)
 
-To forecast the price at half-hour `t + 1 day`, the network uses information about half-hour `t`:
-the price 1–6 days before `t`, day of week, hour, month, and the wind and solar forecasts.
-It has two hidden layers of 160 ReLU neurons and was trained with Adam (learning rate 1.35e-4)
-with early stopping. The settings came from a 50-trial Optuna search.
+Each row is one half-hour `T` to forecast, using only what is known on the evening before `T`'s
+day, when the trades are chosen:
+
+* the price 2–7 days before `T` (the price 1 day before is partly after the decision time)
+* day of week, hour (UK time) and month of `T`
+* NESO's day-ahead wind (offshore, onshore) and solar forecasts for `T`
+
+The model is a scikit-learn `MLPRegressor`: one hidden layer of 256 ReLU neurons, Adam (learning
+rate 0.0021, batch 64). The first 80 % of rows train it, with the last fifth of those used for
+early stopping and for the 50-trial Optuna search that chose these settings. The last 20 % are
+the test set, used once. It trains on prices clipped to −35..220 GBP/MWh, so a few spikes don't
+dominate, but it is scored on the real prices.
+
+The 2025 report's feature study (`docs/feature_engineering_results.xlsx`, done with the original
+TensorFlow model and setup):
 
 | Feature added | RMSE | MAE | RMSE change |
 |---|---:|---:|---:|
@@ -182,59 +230,34 @@ with early stopping. The settings came from a 50-trial Optuna search.
 | + Solar | 26.67 | 19.39 | −0.3 % |
 | + Wind forecasts ×100 | 25.57 | 19.00 | −4.1 % |
 
-(from `docs/feature_engineering_results.xlsx`; see issues 4 and 5 before reading too much into the
-last two rows)
+Read it with care: those errors were measured against clipped prices (which is most of the
+"outlier prices" gain), the ×100 weight has no effect after scaling, and no seed was fixed. Seed
+noise alone is about ±1 GBP/MWh (see Results).
 
 ---
 
-## ⚠️ Known issues
+## 🛠️ Fixes since the report
 
-Found while tidying the code. The refactor keeps the **original behaviour** so the numbers still
-match the report. Fixing these would change the results, so they are listed here, with their
-effect measured where possible.
+The first refactor kept the report's behaviour exactly. These modelling problems were then fixed
+(the effects in the last column were measured one at a time on the original model):
 
-**Modelling**
+| # | Problem in the 2025 code | Fix | Effect |
+|---|---|---|---|
+| 1 | **ANN traded one day out of step:** the forecast for `t + 1 day` was used to trade at the price at `t` | Each forecast row is the half-hour it predicts, and trades at that half-hour's price | ANN profit +2 % (£2.055m → £2.097m) |
+| 2 | **Energy per trade didn't match the battery:** each trade moved 4.18 MWh of charge but was charged/paid for 15 MWh (`15 MW × price`) | Cash flow = energy of one SoC step × price; the power is checked against the 15 MW connection | All profits ÷ 3.6 |
+| 3 | **Everything in UTC,** while GB trading days, settlement periods and the evening peak follow UK time | Strategy hours, trading days and settlement periods use UK local time | Time-based +3.7 % (£9.795m → £10.155m) |
+| 4 | **ANN scored against clipped prices** (spikes replaced by 73 in the target) | Trained on clipped prices, scored on real ones | Reported RMSE 25.8 was really 32.6 |
+| 5 | **Wind ×100 weight** (cancelled by min-max scaling) and **no fixed seed** | Weight removed; `SEED = 42` | Runs are repeatable |
+| 6 | **Wind/solar forecasts for the wrong day** (for `t`, while predicting `t + 1 day`) | Forecasts for the half-hour being predicted | Part of the new model |
+| 7 | **Hyperparameters tuned on the test set** | Tuned on a validation period before the test set; re-tuned for the new model | Honest test error |
+| 8 | **TensorFlow** (doesn't support current Python) | scikit-learn `MLPRegressor` with the same training method (Adam, chronological early stopping) | Trains in 12 s on Python 3.14 |
+| 9 | **Import/export chart counted planned trades** | Counts executed trades | |
+| 10 | **Wind/solar units:** MW labelled MWh; yearly "totals" summed MW | Labelled MW; yearly energy = MW × 0.5 h, in TWh | Yearly totals were 2× too high |
+| 11 | Forecasts came from an incomplete website export; solar gaps rounded to whole MW; made-up `PublishTime` for gaps | API download (3,230 more real half-hours); same rounding for all; gaps marked `Filled` | |
 
-1. **The ANN strategy trades one day out of step.** The forecast row at time `t` predicts the price
-   at `t + 1 day`, but the backtest picks slots using that row and then trades at the price at `t`.
-   With the forecasts moved to the half-hour they predict, ANN profit from 19 June 2023 rises from
-   £2.055m to **£2.097m**. That is not a big change, because daily price shapes repeat from one day to the next.
-2. **Energy per trade doesn't match the SoC step.** A trade moves the SoC by 0.125 × 33.46 =
-   4.18 MWh, but its cash flow is `15 MW × price`, i.e. 15 MWh (a full hour at 15 MW, or 30 MW for
-   half an hour). Profits are therefore about 3.6 times what the modelled energy would earn.
-   A consistent model would use 0.5 h × 15 MW = 7.5 MWh per trade and a SoC step of 0.224,
-   or keep the 0.125 step and trade 4.18 MWh.
-3. **All times are UTC.** The trading windows and `SettlementPeriod` use UTC hours, but GB settlement
-   periods and the evening peak follow UK local time. During British Summer Time (58 % of rows) the
-   "17:00–20:59" window is 18:00–21:59 local, and period 1 is 01:00 local. Using UK local time
-   for the time-based windows raises its profit from £9.795m to **£10.155m**.
-4. **The ANN error is measured against clipped prices.** Prices outside −35..220 are replaced
-   by 73 in the *target* as well as the inputs, so the model is never scored on the spikes.
-   Against the real next-day prices the test RMSE is 32.6, not 25.8. The "outlier prices
-   replaced" gain of −27.7 % in the feature table is mostly this effect.
-5. **The wind weight does nothing.** The features are min-max scaled, which cancels any constant
-   multiplier (`tests/test_forecasting.py` checks this). The ×100 gain in the table is
-   run-to-run noise. No seed was set, so each training run gives different results.
-6. **The wind/solar forecasts describe the wrong day.** The row for `t` uses the forecast for `t`,
-   while the target is `t + 1 day`. The forecast for `t + 1 day` is already published on the day
-   before, so it could be used (the original had this shift commented out). Also, the most
-   recent price the model sees is 2 days before the half-hour it predicts.
-7. **Hyperparameters were tuned on the test set.** Each Optuna trial was scored on the test period,
-   so the reported test error is slightly optimistic. Scoring on the validation split would fix this.
-8. **Price-based ties.** When two half-hours have the same price at the 8th place, which one gets
-   picked depended on the sorting algorithm (80 of 3,046 days). It is now always the earlier one,
-   which moves the 2016–2025 total from £13,442,841 to £13,445,284.
-9. **The import/export count chart shows planned trades.** It counts the slots chosen to trade,
-   including ones skipped because the battery was full or empty.
-10. **Units:** the DGWS forecast `Quantity` is average power in **MW**, but the figures label it MWh,
-    and "total per year" sums MW values.
-
-**Results files**
-
-11. `results/ann_forecast.csv` (7 Mar 2025) is a later re-run, not the forecast behind the report's
-    ANN trades and forecast figures. That forecast survives as `results/ann_forecast_2025-03-01.csv`
-    (predictions only). `results/ann_forecast_multiple_seeds.csv` comes from an earlier version without
-    the month feature.
+Remaining limitations, by design: the price-based strategy has perfect foresight (an upper bound,
+not a real strategy); trades are a fixed 8 slots a day of 4.18 MWh; prices are the Market Index
+(short-term spot), not a specific day-ahead auction; no fees, imbalance costs or bid-offer spread.
 
 ### What the refactor changed
 
@@ -246,10 +269,8 @@ effect measured where possible.
   rescans the whole table for every gap and takes about 1 s per series).
 * Scripts that had to be edited and re-run once per file (`Exogenous Data/CreateFullDataSet.py`
   had `Wind Onshore` hard-coded) → one function with a parameter.
-* New: `download_data.py` (the raw price data was not in the folder before), tests, and checks
-  that the results still match the original.
-* Deprecated library calls updated (Keras `input_shape`, Optuna `suggest_loguniform`, seaborn
-  `palette` without `hue`).
+* New: `download_data.py` (the raw price data was not in the folder before), `.env` support, and tests.
+* TensorFlow replaced by scikit-learn; deprecated Optuna and seaborn calls updated.
 
 | Original script | Now |
 |---|---|
@@ -260,4 +281,5 @@ effect measured where possible.
 | `ANNForecast.py`, `MultipleModels.py`, `HyperparameterOptimisation.py` | `forecasting.py`, `train_ann.py` |
 | `InitialPlots.py`, `FurtherPlots.py`, `VolumeAnalysis.py`, `ProfitPlots.py`, `PredictedPriceProfitPlots.py`, `ANNForecastVisualisation.py`, `Exogenous Data/AnalysisPlots.py` | `plotting.py`, `make_plots.py` |
 
-The original code is kept unchanged in the first commit on `main`.
+The original code is kept unchanged in the first commit on `main`, and the refactor that
+reproduces the report's numbers exactly is the commit after it.
