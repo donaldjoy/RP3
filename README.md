@@ -174,8 +174,8 @@ relative to the repository, so it runs from wherever it is cloned.
 └── tests/
 ```
 
-To change an assumption, edit `rp3/config.py`. For example, set `SOC_STEP = 0.25` for a battery
-that fills in four half-hours, or change `IMPORT_HOURS` for the time-based strategy.
+To change an assumption, edit `rp3/config.py`. For example, set `CAPACITY_TO_POWER_RATIO = 4` for a
+4-hour battery (8.4 MW, 8 half-hours to fill), or change `IMPORT_HOURS` for the time-based strategy.
 
 ---
 
