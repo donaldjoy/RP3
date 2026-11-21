@@ -5,7 +5,7 @@
 
 Strategies (see rp3/battery.py):
   time   buy 01:00-04:59, sell 17:00-20:59 (UK time) every day
-  price  buy the 8 cheapest and sell the 8 dearest half-hours of each day, using the
+  price  buy the 5 cheapest and sell the 5 dearest half-hours of each day, using the
          real prices (perfect foresight, an upper benchmark)
   ann    the same, but choosing the half-hours from the ANN forecast
 """

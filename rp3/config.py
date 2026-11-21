@@ -54,9 +54,8 @@ PERIODS_PER_DAY = 48                  # half-hours in a normal day (46 / 50 on c
 BATTERY_CAPACITY_MWH = 33.46
 DEGRADATION_PER_CYCLE = 0.025 / 365   # 2.5 % capacity loss per year at one cycle per day
 ROUND_TRIP_EFFICIENCY = 0.9456
-SOC_STEP = 0.125                      # state-of-charge change per half-hour trade (8 trades fill it)
-CAPACITY_TO_POWER_RATIO = 2.231       # MWh of capacity per MW of grid connection (15.0 MW)
-SLOTS_PER_DAY = 8                     # half-hours bought and sold per day (= 1 / SOC_STEP)
+CAPACITY_TO_POWER_RATIO = 2.231       # MWh of capacity per MW of grid connection: 15.0 MW,
+                                      # so up to 7.5 MWh per half-hour and 5 half-hours to fill
 
 # Time-based strategy windows, inclusive UK local hours
 IMPORT_HOURS = (1, 4)     # 01:00-04:59: buy
