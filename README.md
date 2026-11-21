@@ -169,6 +169,7 @@ relative to the repository, so it runs from wherever it is cloned.
 ├── results/              ANN forecasts (trades_*.csv are made by run_backtests.py)
 ├── images/               figures (nn_*.png are hand-drawn diagrams of the original network)
 ├── docs/feature_engineering_results.xlsx
+├── LICENSE               MIT (code), with the Elexon data attribution
 └── tests/
 ```
 
@@ -283,3 +284,15 @@ not a real strategy); trades are a fixed 8 slots a day of 4.18 MWh; prices are t
 
 The original code is kept unchanged in the first commit on `main`, and the refactor that
 reproduces the report's numbers exactly is the commit after it.
+
+---
+
+## 📄 Licence
+
+The code, figures and documentation are released under the [MIT License](LICENSE): anyone may
+use, copy, modify and share them, including commercially, as long as the copyright notice is kept.
+
+The data in `data/` is Elexon BMRS data, used under Elexon's
+[licence to use BMRS open data](https://www.elexon.co.uk/bsc/data/balancing-mechanism-reporting-agent/copyright-licence-bmrs-data/).
+If you reuse it, keep the attribution:
+*Contains BMRS data © Elexon Limited copyright and database right 2025.*
