@@ -8,7 +8,7 @@ January 2025:
 | Strategy | How it picks the half-hours to trade |
 |---|---|
 | ⏰ **Time based** | Buys 01:00–04:59 and sells 17:00–20:59 (UK time) every day |
-| 🎯 **Price based** | Buys the 8 cheapest and sells the 8 dearest half-hours of each day, from the *real* prices (perfect foresight, so an upper benchmark) |
+| 🎯 **Price based** | Buys the 5 cheapest and sells the 5 dearest half-hours of each day, from the *real* prices (perfect foresight, so an upper benchmark) |
 | 🧠 **ANN based** | The same, but picks the half-hours from a neural-network forecast of the next day's prices |
 
 This is the third-year research project (RP3, 2025) that came before my fourth-year project (RP4). It
@@ -22,13 +22,13 @@ From `python run_backtests.py` (GBP millions):
 
 | Strategy | Profit 19 Sep 2016 → 20 Jan 2025 | Profit 24 May 2023 → 20 Jan 2025 | Full cycles |
 |---|---:|---:|---:|
-| Time based | 2.832 | 0.519 | 3043 |
-| Price based (perfect foresight) | 3.795 | 0.710 | 2666 |
-| ANN based | – | **0.629** | 559 |
+| Time based | 3.094 | 0.540 | 3045 |
+| Price based (perfect foresight) | 4.343 | 0.778 | 2678 |
+| ANN based | – | **0.694** | 561 |
 
 The ANN only has forecasts for its test period (the last 20 % of the data), so the three
 strategies are compared from the first full UK day of that period, 24 May 2023. Over that
-period the forecast closes **58 %** of the gap between fixed hours and perfect foresight.
+period the forecast closes **65 %** of the gap between fixed hours and perfect foresight.
 
 ANN test-set error, against the real (unclipped) price of each half-hour:
 
@@ -47,8 +47,9 @@ between runs are noise.
   <img src="images/Total Profit per Year for Predicted Price.png" width="48%">
 </p>
 
-> **These numbers are lower than in the 2025 report.** The report's profits were about 3.6 times
-> too high, because each trade was charged for 15 MWh while the battery only moved 4.18 MWh. See
+> **These numbers are lower than in the 2025 report.** The report charged every trade for 15 MWh
+> (`15 MW × price`), so 8 trades a day put 120 MWh through a 33.46 MWh battery. The battery now
+> runs at its full 15 MW (7.5 MWh per half-hour) and can only move what it can store. See
 > [Fixes since the report](#%EF%B8%8F-fixes-since-the-report) for this and the other corrections.
 
 ---
@@ -187,18 +188,22 @@ that fills in four half-hours, or change `IMPORT_HOURS` for the time-based strat
 | Capacity | 33.46 MWh, losing 2.5 % a year at one full cycle a day (0.025/365 per cycle) |
 | Grid connection | capacity / 2.231 ≈ 15.0 MW |
 | Round-trip efficiency | 94.56 %, applied to sales |
-| State of charge (SoC) step per trade | 0.125 (8 half-hour trades fill or empty it) |
+| Energy per half-hour trade | up to 15 MW × 0.5 h = 7.5 MWh (5 half-hours to fill: 4 × 7.5 + 3.46 MWh) |
 
-Every half-hour the strategy says *buy*, *sell* or *wait*. A buy is skipped if the battery is full,
-and a sale is skipped if it is empty. Each trade moves one SoC step of energy, 0.125 × capacity
-(4.18 MWh when new, 8.4 MW for half an hour, within the 15 MW connection). A buy costs
-`energy × price` and a sale earns `energy × price × efficiency`. One full cycle is a SoC distance of
-2 (fill and empty), and the capacity shrinks after each cycle. Days and hours are UK local time.
+Every half-hour the strategy says *buy*, *sell* or *wait*. The battery trades at its full grid
+connection, so a half-hour moves 7.5 MWh, or only what still fits when it is nearly full or empty
+(nothing at all when it is full or empty). A buy costs `energy × price` and a sale earns
+`energy × price × efficiency`. One full cycle is a state-of-charge distance of 2 (fill and empty);
+after each cycle the capacity, and with it the power, shrinks. Days and hours are UK local time.
+
+Because a full charge takes 5 half-hours, the price-ranked strategies trade the 5 cheapest and
+5 dearest half-hours of each day. The time-based strategy keeps its 4-hour windows and fills or
+empties in the first 2.5 hours of each.
 
 **Speed:** the original scripts updated a DataFrame one row at a time (81 s for the time-based run,
-59 s for the price-based one). Now only the SoC walk is a loop, over plain integers. The daily
-ranking, cycle counting, degradation and cash flows are whole-array operations, so the runs take
-0.06 s and 0.18 s.
+59 s for the price-based one). Now the daily ranking is a whole-array operation and the battery
+is a plain loop over numbers (its state depends on every earlier trade), so the runs take 0.25 s
+and 0.3 s.
 
 ### ANN forecast (`rp3/forecasting.py`)
 
@@ -245,7 +250,7 @@ The first refactor kept the report's behaviour exactly. These modelling problems
 | # | Problem in the 2025 code | Fix | Effect |
 |---|---|---|---|
 | 1 | **ANN traded one day out of step:** the forecast for `t + 1 day` was used to trade at the price at `t` | Each forecast row is the half-hour it predicts, and trades at that half-hour's price | ANN profit +2 % (£2.055m → £2.097m) |
-| 2 | **Energy per trade didn't match the battery:** each trade moved 4.18 MWh of charge but was charged/paid for 15 MWh (`15 MW × price`) | Cash flow = energy of one SoC step × price; the power is checked against the 15 MW connection | All profits ÷ 3.6 |
+| 2 | **Energy per trade didn't match the battery:** each trade moved 4.18 MWh of charge but was charged/paid for 15 MWh (`15 MW × price`), i.e. 120 MWh a day through a 33.46 MWh battery | The battery trades at its full 15 MW: 7.5 MWh per half-hour, limited by what it can store, 5 slots a day | Profits about 3.3× lower |
 | 3 | **Everything in UTC,** while GB trading days, settlement periods and the evening peak follow UK time | Strategy hours, trading days and settlement periods use UK local time | Time-based +3.7 % (£9.795m → £10.155m) |
 | 4 | **ANN scored against clipped prices** (spikes replaced by 73 in the target) | Trained on clipped prices, scored on real ones | Reported RMSE 25.8 was really 32.6 |
 | 5 | **Wind ×100 weight** (cancelled by min-max scaling) and **no fixed seed** | Weight removed; `SEED = 42` | Runs are repeatable |
@@ -257,7 +262,7 @@ The first refactor kept the report's behaviour exactly. These modelling problems
 | 11 | Forecasts came from an incomplete website export; solar gaps rounded to whole MW; made-up `PublishTime` for gaps | API download (3,230 more real half-hours); same rounding for all; gaps marked `Filled` | |
 
 Remaining limitations, by design: the price-based strategy has perfect foresight (an upper bound,
-not a real strategy); trades are a fixed 8 slots a day of 4.18 MWh; prices are the Market Index
+not a real strategy); the battery always fills and empties once a day in fixed-size trades; prices are the Market Index
 (short-term spot), not a specific day-ahead auction; no fees, imbalance costs or bid-offer spread.
 
 ### What the refactor changed

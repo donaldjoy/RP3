@@ -13,37 +13,41 @@ def test_soc_stays_between_empty_and_full():
     actions = [EXPORT] + [IMPORT] * 10 + [EXPORT] * 10
     out = simulate(actions, np.full(21, 50.0), NO_DEGRADATION)
     assert out["SoC"].between(0, 1).all()
-    assert out["SoC"].max() == 1.0
-    # selling when empty and buying when full are skipped
+    assert out["SoC"].max() == pytest.approx(1.0)
+    # selling when empty and buying when full are skipped: 5 buys fill it, 5 sales empty it
     assert out["Executed"].iloc[0] == IDLE
-    assert (out["Executed"] != IDLE).sum() == 16
+    assert (out["Executed"] != IDLE).sum() == 10
 
 
-def test_each_trade_moves_the_energy_of_one_soc_step():
+def test_trades_run_at_the_full_grid_connection():
     b = NO_DEGRADATION
+    assert b.power_mw == pytest.approx(15.0, abs=0.01)
+    assert b.energy_per_trade_mwh == pytest.approx(7.5, abs=0.01)     # 15 MW for half an hour
+    assert b.slots_to_full == 5
     out = simulate([IMPORT, EXPORT], [10.0, 30.0], b)
-    energy = b.soc_step * b.capacity_mwh                      # 4.18 MWh
+    energy = b.energy_per_trade_mwh
     assert out["Energy (MWh)"].tolist() == pytest.approx([energy, energy])
     assert out["Cost"].tolist() == pytest.approx([-energy * 10, 0])
     assert out["Revenue"].tolist() == pytest.approx([0, energy * 30 * b.round_trip_efficiency])
-    # buying 8 steps adds up to exactly one full battery
-    full = simulate([IMPORT] * 8, np.ones(8), b)
-    assert full["Energy (MWh)"].sum() == pytest.approx(b.capacity_mwh)
 
 
-def test_trade_size_must_fit_the_grid_connection():
-    assert Battery().energy_per_trade_mwh / 0.5 <= Battery().power_mw
-    with pytest.raises(ValueError):
-        Battery(soc_step=0.5)                                  # 16.7 MWh in half an hour = 33 MW > 15 MW
+def test_the_last_trade_only_moves_what_fits():
+    b = NO_DEGRADATION
+    full = simulate([IMPORT] * 6, np.ones(6), b)
+    moved = full["Energy (MWh)"].to_numpy()
+    assert moved[:4] == pytest.approx([b.energy_per_trade_mwh] * 4)
+    assert moved[4] == pytest.approx(b.capacity_mwh - 4 * b.energy_per_trade_mwh)   # 3.46 MWh
+    assert moved[5] == 0 and full["Executed"].iloc[5] == IDLE
+    assert moved.sum() == pytest.approx(b.capacity_mwh)
 
 
-def test_one_full_cycle_degrades_the_next_trade():
+def test_one_full_cycle_degrades_capacity_and_power():
     b = Battery(degradation_per_cycle=0.1)
-    actions = [IMPORT] * 8 + [EXPORT] * 8 + [IMPORT]           # 16 trades = one full cycle
-    out = simulate(actions, np.ones(17), b)
-    assert out["Total Cycles Achieved"].iloc[15] == 1
-    assert out["Total Cycles Achieved"].isna().sum() == 16
-    assert out["Energy (MWh)"].iloc[16] == pytest.approx(out["Energy (MWh)"].iloc[0] * 0.9)
+    actions = [IMPORT] * 5 + [EXPORT] * 5 + [IMPORT]           # fill and empty = one full cycle
+    out = simulate(actions, np.ones(11), b)
+    assert out["Total Cycles Achieved"].iloc[9] == 1
+    assert out["Total Cycles Achieved"].isna().sum() == 10
+    assert out["Energy (MWh)"].iloc[10] == pytest.approx(out["Energy (MWh)"].iloc[0] * 0.9)
 
 
 def test_time_based_windows_follow_uk_local_time():
@@ -54,7 +58,7 @@ def test_time_based_windows_follow_uk_local_time():
         hours = times.tz_convert("Europe/London").hour
         assert (actions[(hours >= 1) & (hours <= 4)] == IMPORT).all()
         assert (actions[(hours >= 17) & (hours <= 20)] == EXPORT).all()
-        assert (actions == IMPORT).sum() == 8 and (actions == EXPORT).sum() == 8
+        assert (actions == IMPORT).sum() == 8 and (actions == EXPORT).sum() == 8   # windows are 4 hours
     # 16:00 UTC in July is 17:00 BST: a sell slot
     assert time_based_actions(pd.DatetimeIndex(["2024-07-15 16:00"], tz="UTC"))[0] == EXPORT
 
